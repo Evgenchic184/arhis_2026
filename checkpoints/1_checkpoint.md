@@ -5,11 +5,11 @@
 - Всех считаем грустными.
 2. Первичный сбор данных и EDA
 - Источник 1 - https://www.kaggle.com/datasets/vijayj0shi/reddit-dataset-with-sentiment-analysis
-- EDA?
+- [EDA](../notebooks/EDA.ipynb)
 - Утечки маловероятны, но может быть ложная корреляция между конкретными словами и меткой класса.
 --------------------------------------------------------------------------
 - Источник 2 - https://www.kaggle.com/datasets/andrewmvd/cyberbullying-classification
-- [EDA](/ai_garbage/eda_plan_cyberbullying.md) (Взять как основу)
+- [EDA](../notebooks/EDA.ipynb)
 3. Data Contract
 Схема данных
 
@@ -53,8 +53,9 @@
 
 ---
 
-4. Архитектура системы
-
+4. Архитектура системы  
+[Описание архитектуры](system_design_template.md)
+![task_stages.png](task_stages.png)
 
 5. Риски (v0)
 - Сленг -> Невозможность классификации, снижение точности

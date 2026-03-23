@@ -1,0 +1,66 @@
+import logging
+import sys
+
+import pandas as pd
+import numpy as np
+np.random.seed(42)
+
+sys.path.insert(0, "./")
+
+from src.utils import read_params
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s:%(name)s:%(message)s')
+
+params = read_params()
+
+def read_data(path: str = './data/cyberbullying_tweets.csv') -> pd.DataFrame:
+    data = pd.read_csv(path)
+    logging.info(f"Data shape: {data.shape}")
+    logging.info(f"New target distribution: \n{data[params['target_multi']].value_counts(normalize=True).to_markdown()}")
+    return data
+
+def bootstrap(data):
+    index_0 = data[data[params['target_binary']] == 0].index
+    amount = (data[params['target_binary']] == 1).sum() - (data[params['target_binary']] == 0).sum()
+    index_to_add = np.random.choice(index_0, amount)
+    new_blood = data.loc[index_to_add].reset_index(drop=True)
+    data = pd.concat([data, new_blood]).reset_index(drop=True)
+    return data
+    
+
+def prepare_target(data: pd.DataFrame) -> pd.DataFrame:
+    data[params['target_binary']] = np.where(data[params['target_multi']] == 'not_cyberbullying', 0, 1)
+    logging.info(f"New target distribution: \n{data[params['target_binary']].value_counts(normalize=True).to_markdown()}")
+    data = bootstrap(data)
+    logging.info(f"New target distribution after bootstrap: \n{data[params['target_binary']].value_counts(normalize=True).to_markdown()}")
+    
+    return data
+
+def preprocess_row(text):
+    import re
+    text = text.lower()
+    text = re.sub(r'http\S+|www\S+|https\S+', '', text)
+    text = re.sub(r'@\w+|#\w+', '', text)
+    text = re.sub(r'[^a-zA-Z\s]', ' ', text)
+    words = text.split()
+    words = [w for w in words if len(w) > 2]
+    return " ".join(words)
+
+def prepare_text(data: pd.DataFrame) -> pd.DataFrame:
+    data[params['text_prepared']] = data[params['text']].apply(lambda x: preprocess_row(x))
+    return data
+
+def save_data(data: pd.DataFrame) -> None:
+    data.to_parquet(params["datasets_path"]["all_data"])    
+    logging.info(f"Saved successufl. Data shape: {data.shape}")
+    
+
+def main():
+    data = read_data()
+    data = prepare_target(data)
+    data = prepare_text(data)
+    save_data(data)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,17 @@
+stages:
+  prepare_data:
+    cmd: venv/bin/python src/preprocess_data.py
+    deps:
+    - ./data/cyberbullying_tweets.csv
+    - ./params.yaml
+    outs:
+    - ./data/all_data.parquet
+  split_data:
+    cmd: venv/bin/python src/split_data.py
+    deps:
+    - ./data/all_data.parquet
+    - ./params.yaml
+    outs:
+    - ./data/train.parquet
+    - ./data/val.parquet
+    - ./data/test.parquet

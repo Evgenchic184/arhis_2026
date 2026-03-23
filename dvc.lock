@@ -1,0 +1,42 @@
+schema: '2.0'
+stages:
+  prepare_data:
+    cmd: venv/bin/python src/preprocess_data.py
+    deps:
+    - path: ./data/cyberbullying_tweets.csv
+      hash: md5
+      md5: c85e2d40bf87b27619f2a4c49fcb9cda
+      size: 7174545
+    - path: ./params.yaml
+      hash: md5
+      md5: b73a573613b5b302525b617978d63419
+      size: 283
+    outs:
+    - path: ./data/all_data.parquet
+      hash: md5
+      md5: c62a233436ce2afa81d1d49308a25bc7
+      size: 10844540
+  split_data:
+    cmd: venv/bin/python src/split_data.py
+    deps:
+    - path: ./data/all_data.parquet
+      hash: md5
+      md5: c62a233436ce2afa81d1d49308a25bc7
+      size: 10844540
+    - path: ./params.yaml
+      hash: md5
+      md5: b73a573613b5b302525b617978d63419
+      size: 283
+    outs:
+    - path: ./data/test.parquet
+      hash: md5
+      md5: 7426ec826de58dbd61075c2c47028b78
+      size: 2213502
+    - path: ./data/train.parquet
+      hash: md5
+      md5: ea4c499c85e64cec377a24dd294bc792
+      size: 6945311
+    - path: ./data/val.parquet
+      hash: md5
+      md5: 261b5a02ff7b5fb554071ad6dba8345b
+      size: 2217942

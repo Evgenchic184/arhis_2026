@@ -9,34 +9,78 @@ stages:
       size: 7174545
     - path: ./params.yaml
       hash: md5
-      md5: b73a573613b5b302525b617978d63419
-      size: 283
+      md5: 0a72f7b0072b1a0e55d92b507cda1a5c
+      size: 343
     outs:
     - path: ./data/all_data.parquet
       hash: md5
-      md5: c62a233436ce2afa81d1d49308a25bc7
-      size: 10844540
+      md5: b0433ec3b31accdd5a9c76295fed2532
+      size: 11111238
   split_data:
     cmd: venv/bin/python src/split_data.py
     deps:
-    - path: ./data/all_data.parquet
+    - path: ./data/with_user_features.parquet
       hash: md5
-      md5: c62a233436ce2afa81d1d49308a25bc7
-      size: 10844540
+      md5: 223278931b7f0b95ddce2bfb3ec7b451
+      size: 11870939
     - path: ./params.yaml
       hash: md5
-      md5: b73a573613b5b302525b617978d63419
-      size: 283
+      md5: 0a72f7b0072b1a0e55d92b507cda1a5c
+      size: 343
     outs:
     - path: ./data/test.parquet
       hash: md5
-      md5: 7426ec826de58dbd61075c2c47028b78
-      size: 2213502
+      md5: ce4fe21d603f9182bb2550683a6fc386
+      size: 2508202
     - path: ./data/train.parquet
       hash: md5
-      md5: ea4c499c85e64cec377a24dd294bc792
-      size: 6945311
+      md5: e49f14cde1f849832dc918c1c3bf8b83
+      size: 7649441
     - path: ./data/val.parquet
       hash: md5
-      md5: 261b5a02ff7b5fb554071ad6dba8345b
-      size: 2217942
+      md5: 5ee2a0429a58ddedcce077de9dcc85e2
+      size: 2529171
+  add_user_features:
+    cmd: venv/bin/python src/add_user_features.py
+    deps:
+    - path: ./data/all_data.parquet
+      hash: md5
+      md5: b0433ec3b31accdd5a9c76295fed2532
+      size: 11111238
+    - path: ./params.yaml
+      hash: md5
+      md5: 0a72f7b0072b1a0e55d92b507cda1a5c
+      size: 343
+    - path: ./src/add_user_features.py
+      hash: md5
+      md5: d663b1b78fd33969d6172a57bb32f157
+      size: 1063
+    - path: ./src/feature_store.py
+      hash: md5
+      md5: 5bc47235def132fe7e242c0fec4b3997
+      size: 3357
+    outs:
+    - path: ./data/with_user_features.parquet
+      hash: md5
+      md5: 223278931b7f0b95ddce2bfb3ec7b451
+      size: 11870939
+  validate_data:
+    cmd: venv/bin/python src/validate_data.py
+    deps:
+    - path: ./data/with_user_features.parquet
+      hash: md5
+      md5: 223278931b7f0b95ddce2bfb3ec7b451
+      size: 11870939
+    - path: ./data_contract.yaml
+      hash: md5
+      md5: 1f7d1e1ea3cbbaba0bec6b1979e3aa9a
+      size: 4841
+    - path: ./src/validate_data.py
+      hash: md5
+      md5: 5b7f83086e685fa733750e50975f8651
+      size: 2009
+    outs:
+    - path: ./reports/validation_report.json
+      hash: md5
+      md5: 40e8ff8d8d8dfac0de833c660c09176b
+      size: 54

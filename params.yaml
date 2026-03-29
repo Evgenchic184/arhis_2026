@@ -5,6 +5,7 @@ text_prepared: "text_prepared"
 
 datasets_path:
     all_data: "./data/all_data.parquet"
+    with_user_features: "./data/with_user_features.parquet"
     train: "./data/train.parquet"
     val: "./data/val.parquet"
     test: "./data/test.parquet"

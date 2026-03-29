@@ -6,10 +6,28 @@ stages:
     - ./params.yaml
     outs:
     - ./data/all_data.parquet
+  add_user_features:
+    cmd: venv/bin/python src/add_user_features.py
+    deps:
+      - ./data/all_data.parquet
+      - ./params.yaml
+      - ./src/add_user_features.py
+      - ./src/feature_store.py
+    outs:
+      - ./data/with_user_features.parquet
+  validate_data:
+    cmd: venv/bin/python src/validate_data.py
+    deps:
+      - ./data/with_user_features.parquet
+      - ./data_contract.yaml
+      - ./src/validate_data.py
+    outs:
+      - ./reports/validation_report.json
+    always_changed: true
   split_data:
     cmd: venv/bin/python src/split_data.py
     deps:
-    - ./data/all_data.parquet
+    - ./data/with_user_features.parquet
     - ./params.yaml
     outs:
     - ./data/train.parquet

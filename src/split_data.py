@@ -26,7 +26,7 @@ def split_data(data: pd.DataFrame):
     return data_train, data_val, data_test
 
 def main():
-    data = pd.read_parquet(params["datasets_path"]["all_data"])
+    data = pd.read_parquet(params["datasets_path"]["with_user_features"])
     data_train, data_val, data_test = split_data(data)
 
     data_train.to_parquet(params["datasets_path"]["train"])

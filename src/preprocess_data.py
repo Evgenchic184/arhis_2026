@@ -8,6 +8,7 @@ np.random.seed(42)
 sys.path.insert(0, "./")
 
 from src.utils import read_params
+from src.transformations.text import preprocess_text, extract_text_features
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s:%(name)s:%(message)s')
 
@@ -36,18 +37,15 @@ def prepare_target(data: pd.DataFrame) -> pd.DataFrame:
     
     return data
 
-def preprocess_row(text):
-    import re
-    text = text.lower()
-    text = re.sub(r'http\S+|www\S+|https\S+', '', text)
-    text = re.sub(r'@\w+|#\w+', '', text)
-    text = re.sub(r'[^a-zA-Z\s]', ' ', text)
-    words = text.split()
-    words = [w for w in words if len(w) > 2]
-    return " ".join(words)
+def prepare_text_features(data: pd.DataFrame) -> pd.DataFrame:
+    data[params['text_prepared']] = data[params['text']].apply(preprocess_text)
+    
+    text_features = data[params['text']].apply(extract_text_features)
+    text_features_df = pd.DataFrame(text_features.tolist(), index=data.index)
 
-def prepare_text(data: pd.DataFrame) -> pd.DataFrame:
-    data[params['text_prepared']] = data[params['text']].apply(lambda x: preprocess_row(x))
+    data = pd.concat([data, text_features_df], axis=1)
+    
+    logging.info(f"Added text features: {list(text_features_df.columns)}")
     return data
 
 def save_data(data: pd.DataFrame) -> None:
@@ -58,7 +56,7 @@ def save_data(data: pd.DataFrame) -> None:
 def main():
     data = read_data()
     data = prepare_target(data)
-    data = prepare_text(data)
+    data = prepare_text_features(data)
     save_data(data)
 
 

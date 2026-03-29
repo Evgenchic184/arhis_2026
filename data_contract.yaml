@@ -1,0 +1,178 @@
+version: "1.0"
+meta:
+  project: "Comment Moderation ML System"
+  owner: "Mikhail & Eugene"
+  created: "29.03.2026"
+
+# =============================================================================
+# 1. FEATURE EXTRACTION
+# =============================================================================
+derived_features:
+  description: "Признаки, извлекаемые из входных данных."
+  
+  text_prepared:
+    source: "text"
+    transformation: "src.transformations.text.preprocess_text"
+    type: string
+    nullable: false
+    description: "Очищенный текст (lowercase, без URL/@/#)"
+  
+  text_length:
+    source: "text_prepared"
+    transformation: "len(text)"
+    type: int
+    range: [1, null]
+    nullable: false
+  
+  caps_ratio:
+    source: "text"
+    transformation: "sum(c.isupper() for c in text) / max(len(text), 1)"
+    type: float
+    range: [0.0, 1.0]
+    nullable: false
+  
+  has_url:
+    source: "text"
+    transformation: "'http' in text"
+    type: boolean
+    nullable: false
+  
+  has_mention:
+    source: "text"
+    transformation: "'@' in text"
+    type: boolean
+    nullable: false
+
+# =============================================================================
+# 2. FEATURE GENERATION
+# =============================================================================
+user_features:
+  description: "Признаки пользователя из Feature Store."
+  
+  is_new_user:
+    source: "feature_store"
+    type: binary
+    range: [0, 1]
+    default: 1
+    description: "Флаг нового пользователя"
+  
+  reputation_score:
+    source: "feature_store"
+    type: float
+    range: [0.0, 1.0]
+    default: 0.5
+    update_trigger: "after_moderation_decision"
+    description: "Репутация пользователя"
+  
+  reports_last_24h:
+    source: "feature_store"
+    type: int
+    range: [0, null]
+    default: 0
+    update_trigger: "on_new_report"
+    description: "Жалобы на пользователя за последние 24 часа"
+  
+  account_age_days:
+    source: "feature_store"
+    type: int
+    range: [0, null]
+    default: 0
+    description: "Возраст аккаунта в днях"
+
+# =============================================================================
+# 3. TRAINING DATA
+# =============================================================================
+training_data:
+  input:
+    source: "cyberbullying_tweets.csv"
+    format: "csv"
+    schema:
+      tweet_text: {type: string, nullable: false}
+      cyberbullying_type: {type: string, nullable: false}
+  
+  output:
+    files:
+      train: "data/train.parquet"
+      val: "data/val.parquet"
+      test: "data/test.parquet"
+    
+    schema:
+      derived_features:
+        - text_prepared
+        - text_length
+        - caps_ratio
+        - has_url
+        - has_mention
+      user_features:
+        - is_new_user
+        - reputation_score
+        - reports_last_24h
+        - account_age_days
+      target:
+        cyberbullying_bin: {type: int, range: [0, 1]}
+    
+    split:
+      ratios: {train: 0.6, val: 0.2, test: 0.2}
+      stratify_by: "cyberbullying_type"
+      seed: 42
+  
+  quality_requirements:
+    min_rows: 10000
+    target_distribution:
+      min_ratio_class_0: 0.45
+      max_ratio_class_0: 0.55
+
+# =============================================================================
+# 4. INFERENCE DATA
+# =============================================================================
+inference_data:
+  input:
+    source: "request"
+    schema:
+      comment_id: {type: string, nullable: false}
+      text: {type: string, nullable: false}
+      user_id: {type: string, nullable: true}
+    
+    feature_generation:
+      derived_features:
+        - text_prepared
+        - text_length
+        - caps_ratio
+        - has_url
+        - has_mention
+      
+      uses_user_features:
+        - is_new_user
+        - reputation_score
+        - reports_last_24h
+        - account_age_days
+  
+  output:
+    schema:
+      request_id: {type: string, nullable: false}
+      prediction: {type: int, range: [0, 1]}
+      confidence: {type: float, range: [0.0, 1.0]}
+      model_version: {type: string}
+      inference_time_ms: {type: int}
+  
+  logging:
+    destination: "storage/predictions/"
+    retention_days: 120
+
+# =============================================================================
+# 5. FEEDBACK DATA
+# =============================================================================
+feedback_data:
+  schema:
+    request_id: {type: string, nullable: false}
+    final_label: {type: int, range: [0, 1]}
+    moderator_id: {type: string, nullable: true}
+    was_auto_decision: {type: boolean, nullable: false}
+    timestamp: {type: datetime}
+  
+  join_rule:
+    key: "request_id"
+    max_delay: "7d"
+  
+  quality_requirements:
+    max_disagreement_rate: 0.15

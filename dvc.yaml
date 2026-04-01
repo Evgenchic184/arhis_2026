@@ -27,8 +27,8 @@ stages:
   split_data:
     cmd: venv/bin/python src/split_data.py
     deps:
-    - ./data/with_user_features.parquet
     - ./params.yaml
+    - ./reports/validation_report.json
     outs:
     - ./data/train.parquet
     - ./data/val.parquet

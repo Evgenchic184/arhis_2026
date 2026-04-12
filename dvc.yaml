@@ -33,3 +33,4 @@ stages:
     - ./data/train.parquet
     - ./data/val.parquet
     - ./data/test.parquet
+    always_changed: true

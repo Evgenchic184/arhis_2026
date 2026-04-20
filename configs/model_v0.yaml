@@ -1,0 +1,16 @@
+lib_model: src.catboost_model
+name_model: CatboostModel
+model_params:
+    iterations: 
+      - 100
+      - 200
+      - 400
+    max_depth:
+      - 1
+      - 2
+      - 4
+      - 8
+
+features: 
+  - text_prepared
+  

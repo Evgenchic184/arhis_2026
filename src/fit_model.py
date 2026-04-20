@@ -1,6 +1,7 @@
 import importlib
 import logging
 import sys
+import mlflow
 
 import pandas as pd
 import numpy as np
@@ -37,18 +38,20 @@ def main():
     X_train, y_train, X_val, y_val = load_data()
 
     order_params_name = model_params.keys()
-    
+    mlflow.set_experiment('mlops_catboost')
     for grid_params in product(*[model_params[i] for i in order_params_name]):
-        print(grid_params)
-        cur_params = {"text_features": ["text_prepared"], "verbose": False}
-        for i, j in zip(order_params_name, grid_params):
-            cur_params[i] = j
-        print(cur_params)
-        model = source_model(model_params=cur_params, features=features)
-
-        model.fit(X_train, y_train)
-        y_proba = model.predict_proba(X_val)
-        print(average_precision_score(y_score=y_proba, y_true=y_val))
+        with mlflow.start_run() as run:
+            cur_params = {"text_features": ["text_prepared"], "verbose": False}
+            for i, j in zip(order_params_name, grid_params):
+                cur_params[i] = j
+            print(cur_params)
+            mlflow.log_params(cur_params)
+            model = source_model(model_params=cur_params, features=features)
+    
+            model.fit(X_train, y_train)
+            y_proba = model.predict_proba(X_val)
+            val_metric = average_precision_score(y_score=y_proba, y_true=y_val)
+            mlflow.log_metric("pr_auc-val", val_metric)
         
 
 

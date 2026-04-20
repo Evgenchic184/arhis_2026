@@ -16,3 +16,4 @@ class CatboostModel(BaseModel):
         X_ = X[self.features]
         return self.model.predict_proba(X_)[:, 1]
 
+

@@ -1,0 +1,8 @@
+lib_model: src.lr_model
+name_model: LRModel
+model_params:
+    C: 
+        - 1.0 
+features: 
+  - text_prepared
+  

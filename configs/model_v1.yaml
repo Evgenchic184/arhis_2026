@@ -1,0 +1,8 @@
+lib_model: src.nb_model
+name_model: NaiveBayesModel
+model_params:
+    alpha: 
+        - 1.0
+features: 
+  - text_prepared
+  

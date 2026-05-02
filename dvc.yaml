@@ -34,3 +34,30 @@ stages:
     - ./data/val.parquet
     - ./data/test.parquet
     always_changed: true
+  
+  fit_catboost:
+    cmd: venv/bin/python src/fit_model.py configs/model_v0.yaml
+    deps:
+    - ./configs/model_v0.yaml
+    - ./params.yaml
+    - ./data/train.parquet
+    - ./data/val.parquet
+    - ./data/test.parquet
+    # outs:
+  fit_nb:
+    cmd: venv/bin/python src/fit_model.py configs/model_v1.yaml
+    deps:
+    - ./configs/model_v1.yaml
+    - ./params.yaml
+    - ./data/train.parquet
+    - ./data/val.parquet
+    - ./data/test.parquet
+    # outs:
+  fit_lr:
+    cmd: venv/bin/python src/fit_model.py configs/model_v2.yaml
+    deps:
+    - ./configs/model_v2.yaml
+    - ./params.yaml
+    - ./data/train.parquet
+    - ./data/val.parquet
+    - ./data/test.parquet

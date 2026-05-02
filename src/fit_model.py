@@ -2,11 +2,13 @@ import importlib
 import logging
 import sys
 import mlflow
+import argparse
 
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 
-from sklearn.metrics import average_precision_score
+from sklearn.metrics import average_precision_score, precision_recall_curve, roc_auc_score
 from itertools import product
 np.random.seed(42)
 
@@ -26,7 +28,12 @@ def load_data():
     return X_train, y_train, X_val, y_val
 
 def main():
-    model_config = read_params("configs/model_v0.yaml")
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument("config_path")
+    args = parser.parse_args()
+    
+    model_config = read_params(args.config_path)
     
     lib_model = model_config['lib_model']
     name_model = model_config['name_model']
@@ -38,10 +45,11 @@ def main():
     X_train, y_train, X_val, y_val = load_data()
 
     order_params_name = model_params.keys()
-    mlflow.set_experiment('mlops_catboost')
+    mlflow.set_experiment(params['mlflow_exp_name'])
     for grid_params in product(*[model_params[i] for i in order_params_name]):
         with mlflow.start_run() as run:
-            cur_params = {"text_features": ["text_prepared"], "verbose": False}
+            mlflow.set_tag("model_name", name_model)
+            cur_params = {}
             for i, j in zip(order_params_name, grid_params):
                 cur_params[i] = j
             print(cur_params)
@@ -51,7 +59,24 @@ def main():
             model.fit(X_train, y_train)
             y_proba = model.predict_proba(X_val)
             val_metric = average_precision_score(y_score=y_proba, y_true=y_val)
+            train_metric = average_precision_score(y_score=model.predict_proba(X_train), y_true=y_train)
+            
             mlflow.log_metric("pr_auc-val", val_metric)
+            mlflow.log_metric("pr_auc-train", train_metric)
+            mlflow.log_metric("overfitting", abs(train_metric - val_metric))
+
+
+            val_metric = roc_auc_score(y_score=y_proba, y_true=y_val)
+            train_metric = roc_auc_score(y_score=model.predict_proba(X_train), y_true=y_train)
+            
+            mlflow.log_metric("roc_auc-val", val_metric)
+            mlflow.log_metric("roc_auc-train", train_metric)
+            model.save(f"{name_model}")
+            
+            prec, rec, thr = precision_recall_curve(y_score=y_proba, y_true=y_val)
+            fig = plt.figure(figsize=(6, 4))
+            plt.plot(rec, prec)
+            mlflow.log_figure(fig, "pr_auc-val.png")
         
 
 

@@ -84,3 +84,72 @@ stages:
       hash: md5
       md5: 40e8ff8d8d8dfac0de833c660c09176b
       size: 54
+  fit_lr:
+    cmd: venv/bin/python src/fit_model.py configs/model_v2.yaml
+    deps:
+    - path: ./configs/model_v2.yaml
+      hash: md5
+      md5: 59676dbe83d62bef9fc4302ed84ddbb1
+      size: 112
+    - path: ./data/test.parquet
+      hash: md5
+      md5: f3387d3f8a6744aea744711924caf619
+      size: 2544446
+    - path: ./data/train.parquet
+      hash: md5
+      md5: f4c5cba70fc5a7449dcbab6196d78603
+      size: 7655606
+    - path: ./data/val.parquet
+      hash: md5
+      md5: 2a564b485664c63bd2e6c674680167ce
+      size: 2525886
+    - path: ./params.yaml
+      hash: md5
+      md5: d215b29049e8b14fd3f655e1edeea543
+      size: 368
+  fit_nb:
+    cmd: venv/bin/python src/fit_model.py configs/model_v1.yaml
+    deps:
+    - path: ./configs/model_v1.yaml
+      hash: md5
+      md5: 391be5e32a987ba856e52d9a18ca4e93
+      size: 123
+    - path: ./data/test.parquet
+      hash: md5
+      md5: f3387d3f8a6744aea744711924caf619
+      size: 2544446
+    - path: ./data/train.parquet
+      hash: md5
+      md5: f4c5cba70fc5a7449dcbab6196d78603
+      size: 7655606
+    - path: ./data/val.parquet
+      hash: md5
+      md5: 2a564b485664c63bd2e6c674680167ce
+      size: 2525886
+    - path: ./params.yaml
+      hash: md5
+      md5: d215b29049e8b14fd3f655e1edeea543
+      size: 368
+  fit_catboost:
+    cmd: venv/bin/python src/fit_model.py configs/model_v0.yaml
+    deps:
+    - path: ./configs/model_v0.yaml
+      hash: md5
+      md5: c29b5f7b8bdd294253e8579df2ab73a6
+      size: 280
+    - path: ./data/test.parquet
+      hash: md5
+      md5: f3387d3f8a6744aea744711924caf619
+      size: 2544446
+    - path: ./data/train.parquet
+      hash: md5
+      md5: f4c5cba70fc5a7449dcbab6196d78603
+      size: 7655606
+    - path: ./data/val.parquet
+      hash: md5
+      md5: 2a564b485664c63bd2e6c674680167ce
+      size: 2525886
+    - path: ./params.yaml
+      hash: md5
+      md5: d215b29049e8b14fd3f655e1edeea543
+      size: 368

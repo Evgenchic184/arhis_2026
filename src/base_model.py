@@ -8,6 +8,7 @@ class BaseModel:
         self.features = features
         self.model = None
         self.version = version
+        self.field_to_save = ["model"]
     
     @abstractmethod
     def fit(self, X, y):
@@ -18,7 +19,7 @@ class BaseModel:
     
     def _dict_to_save(self):
         return {
-            "model": self.model
+            key: getattr(self, key) for key in self.field_to_save
         }
 
     def save(self, path: str):

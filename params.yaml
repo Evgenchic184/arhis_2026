@@ -1,0 +1,50 @@
+data:
+  raw_csv: data/cyberbullying_tweets.csv
+  synthetic_users: 5000
+  output_dir: data
+
+logs:
+  moderation_events: logs/moderation_events.jsonl
+
+split:
+  seed: 42
+  holdout_size: 0.2
+  val_share_of_holdout: 0.5
+
+features:
+  confidence_threshold_low: 0.65
+  confidence_threshold_high: 0.9
+  sample_high_confidence_rate: 0.1
+  runtime:
+    text_column: text_prepared
+    training_feature_columns:
+      - text_length
+      - caps_ratio
+      - has_url
+      - has_mention
+      - is_new_user
+      - reputation_score
+      - reports_last_24h
+      - account_age_days
+    inference_feature_columns:
+      - text_length
+      - caps_ratio
+      - has_url
+      - has_mention
+      - is_new_user
+      - reputation_score
+      - reports_last_24h
+      - account_age_days
+    online_user_feature_columns:
+      - is_new_user
+      - reputation_score
+      - reports_last_24h
+      - account_age_days
+    version: 1
+
+model:
+  max_features: 50000
+  ngram_min: 1
+  ngram_max: 2
+  max_iter: 1000
+  class_weight: balanced

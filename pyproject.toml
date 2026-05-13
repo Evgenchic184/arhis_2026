@@ -1,0 +1,24 @@
+[project]
+name = "arhis-2026"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.13.2",
+    "asyncpg>=0.30.0",
+    "fastapi>=0.115.0",
+    "joblib>=1.4.2",
+    "prometheus-client>=0.21.1",
+    "pydantic-settings>=2.6.0",
+    "pyarrow>=18.1.0",
+    "pyyaml>=6.0.2",
+    "redis>=5.2.1",
+    "scikit-learn>=1.5.2",
+    "sqlalchemy>=2.0.36",
+    "uvicorn[standard]>=0.32.0",
+    "matplotlib>=3.10.8",
+    "numpy>=2.4.2",
+    "pandas>=3.0.1",
+    "seaborn>=0.13.2",
+]

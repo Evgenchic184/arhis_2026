@@ -1,0 +1,57 @@
+stages:
+  preprocess:
+    cmd: uv run python -m src.pipeline.preprocess_data
+    deps:
+      - data/cyberbullying_tweets.csv
+      - params.yaml
+      - src/pipeline/preprocess_data.py
+      - src/feature_store/feature_sets.py
+      - src/feature_store/offline.py
+      - src/feature_store/schemas.py
+      - src/transformations/text.py
+      - src/utils.py
+    outs:
+      - data/all_data.parquet
+      - data/train.parquet
+      - data/val.parquet
+      - data/test.parquet
+      - data/with_user_features.parquet
+
+  materialize_offline_feature_store:
+    cmd: uv run python -m src.pipeline.materialize_offline_feature_store
+    deps:
+      - params.yaml
+      - logs/moderation_events.jsonl
+      - src/pipeline/materialize_offline_feature_store.py
+      - src/utils.py
+    outs:
+      - data/offline_feature_store/offline_training.parquet
+
+  train:
+    cmd: uv run python -m src.pipeline.train_model
+    deps:
+      - params.yaml
+      - data/train.parquet
+      - src/pipeline/train_model.py
+      - src/app/core/settings.py
+      - src/app/core/feature_config.py
+      - src/feature_store/feature_sets.py
+      - src/feature_store/config.py
+      - src/utils.py
+    outs:
+      - models/cyberbullying_moderation.joblib
+      - models/training_metadata.json
+
+  evaluate:
+    cmd: uv run python -m src.pipeline.evaluate_model
+    deps:
+      - params.yaml
+      - data/val.parquet
+      - data/test.parquet
+      - models/cyberbullying_moderation.joblib
+      - src/pipeline/evaluate_model.py
+      - src/feature_store/feature_sets.py
+      - src/utils.py
+    metrics:
+      - reports/validation_report.json:
+          cache: false

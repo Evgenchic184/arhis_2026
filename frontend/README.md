@@ -25,4 +25,5 @@ It is exposed on `http://localhost:8080` in the default compose setup, and also 
 - comment reporting
 - moderator queue with verdict actions
 - admin user management with role changes
+- admin ML registry view with promote / rollback controls
 - mobile and desktop responsive layout

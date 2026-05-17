@@ -25,6 +25,7 @@ class ReportReason(str, Enum):
 
 class ReportStatus(str, Enum):
     pending = "pending"
+    queued_for_ml = "queued_for_ml"
     under_review = "under_review"
     resolved = "resolved"
     dismissed = "dismissed"
@@ -38,3 +39,23 @@ class ModerationVerdict(str, Enum):
 class MLVerdict(str, Enum):
     toxic = "toxic"
     not_toxic = "not_toxic"
+
+
+class DecisionSource(str, Enum):
+    manual = "manual"
+    ml_auto = "ml_auto"
+
+
+class AlertStatus(str, Enum):
+    firing = "firing"
+    resolved = "resolved"
+
+
+class ModelVersionStatus(str, Enum):
+    candidate = "candidate"
+    validated = "validated"
+    canary = "canary"
+    production = "production"
+    rejected = "rejected"
+    rolled_back = "rolled_back"
+    archived = "archived"

@@ -1,0 +1,14 @@
+route:
+  receiver: arhis-webhook
+  group_by: ["alertname", "severity"]
+  group_wait: 10s
+  group_interval: 1m
+  repeat_interval: 30m
+
+receivers:
+  - name: arhis-webhook
+    webhook_configs:
+      - url: http://api:8000/internal/alerts/webhook
+        send_resolved: true
+
+templates: []

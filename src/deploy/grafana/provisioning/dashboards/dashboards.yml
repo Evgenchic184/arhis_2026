@@ -1,0 +1,10 @@
+apiVersion: 1
+
+providers:
+  - name: Arhis Dashboards
+    folder: Arhis
+    type: file
+    disableDeletion: false
+    editable: false
+    options:
+      path: /var/lib/grafana/dashboards

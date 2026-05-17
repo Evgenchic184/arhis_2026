@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import RequestUserContext, require_admin
 from src.app.core.database import get_db_session
+from src.app.core.events import emit_domain_event
 from src.app.models.user import User
 from src.app.schemas.users import UserRead, UserRoleUpdate
 
@@ -31,7 +32,7 @@ async def list_users(
 async def update_user_role(
     user_id: UUID,
     payload: UserRoleUpdate,
-    _: RequestUserContext = Depends(require_admin),
+    context: RequestUserContext = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
 ) -> UserRead:
     user = await db.get(User, user_id)
@@ -39,14 +40,15 @@ async def update_user_role(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
 
     user.role = payload.role
+    await emit_domain_event(
+        db,
+        event_type="user_role_updated",
+        aggregate_type="user",
+        aggregate_id=str(user.id),
+        payload={"role": user.role.value},
+        actor_id=str(context.user_id),
+        actor_role=context.role.value,
+    )
     await db.commit()
     await db.refresh(user)
-    logger.info(
-        "user_role_updated",
-        extra={
-            "event": "user_role_updated",
-            "user_id": str(user.id),
-            "role": user.role.value,
-        },
-    )
     return user

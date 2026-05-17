@@ -1,0 +1,24 @@
+{
+  "model_name": "cyberbullying_moderation",
+  "mode": "canary_test",
+  "sample_fraction": 0.1,
+  "label_noise_rate": 0.25,
+  "train_rows": 4769,
+  "base_train_rows": 47696,
+  "noisy_rows": 1192,
+  "validation": {
+    "accuracy": 0.7914963205233033,
+    "precision": 0.8180944535969248,
+    "recall": 0.7496540445339036,
+    "f1": 0.7823803584323508,
+    "roc_auc": 0.8596075373588388
+  },
+  "test": {
+    "accuracy": 0.7903012768098623,
+    "precision": 0.8127371273712737,
+    "recall": 0.7544654088050314,
+    "f1": 0.7825179386823222,
+    "roc_auc": 0.8594707613235635
+  },
+  "created_at": "2026-05-17T18:21:10.397374+00:00"
+}

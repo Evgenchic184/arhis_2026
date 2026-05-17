@@ -1,0 +1,69 @@
+groups:
+  - name: arhis-retraining-and-inference
+    rules:
+      - alert: ArhisDataFreshnessHigh
+        expr: arhis_data_freshness_seconds > 86400
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Event data is stale"
+          description: "No fresh parquet event has been observed for more than 24 hours."
+
+      - alert: ArhisDataPsiHigh
+        expr: arhis_data_psi > 0.2
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PSI exceeded threshold"
+          description: "A monitored feature has PSI above 0.2, which indicates drift."
+
+      - alert: ArhisNewTokenShareHigh
+        expr: arhis_data_new_token_share > 0.1
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "New token share increased"
+          description: "The share of tokens outside the baseline vocabulary is above 10%."
+
+      - alert: ArhisManualSampleAccuracyLow
+        expr: arhis_model_sample_manual_count >= 20 and arhis_model_sample_manual_accuracy < 0.95
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Manual review sample accuracy dropped"
+          description: "Sampled manual review accuracy is below 95% on at least 20 rows."
+
+      - alert: ArhisInferenceLatencyHigh
+        expr: histogram_quantile(0.95, sum(rate(arhis_ml_inference_latency_seconds_bucket[5m])) by (le)) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ML inference p95 latency is high"
+          description: "The 95th percentile ML inference latency is above 2 seconds."
+
+      - alert: ArhisHttp5xxRateHigh
+        expr: |
+          sum(rate(arhis_http_requests_total{status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(arhis_http_requests_total[5m])), 1)
+          > 0.01
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "HTTP 5xx error rate is high"
+          description: "More than 1% of API requests are failing with 5xx."
+
+      - alert: ArhisModerationQueueDepthHigh
+        expr: arhis_moderation_queue_depth > 1000
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Moderation queue depth is high"
+          description: "The moderation queue has grown above 1000 items."

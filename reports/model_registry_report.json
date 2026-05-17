@@ -1,0 +1,20 @@
+{
+  "model_name": "cyberbullying_moderation",
+  "version": "cyberbullying_moderation-1-20260518184319",
+  "feature_config_version": 1,
+  "required_accuracy": 0.5,
+  "validation_sample_size": 32,
+  "validation_metrics": {
+    "accuracy": 0.875,
+    "precision": 0.9285714285714286,
+    "recall": 0.8125,
+    "f1": 0.8666666666666667,
+    "roc_auc": 0.95703125
+  },
+  "status": "canary",
+  "label_column": "cyberbullying_bin",
+  "sample_rows": 32,
+  "artifact_uri": "s3://arhis-model-registry/models/cyberbullying_moderation/cyberbullying_moderation-1-20260518184319/model.joblib",
+  "metadata_uri": "s3://arhis-model-registry/models/cyberbullying_moderation/cyberbullying_moderation-1-20260518184319/metadata.json",
+  "traffic_percent": 50
+}

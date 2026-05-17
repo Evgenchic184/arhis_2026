@@ -1,3 +1,15 @@
+x-backend-common: &backend-common
+  env_file:
+    - ../../.env
+  environment:
+    DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/arhis
+    REDIS_URL: redis://redis:6379/0
+    KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    KAFKA_DOMAIN_EVENTS_TOPIC: arhis.domain.events
+    KAFKA_MODERATION_ML_REQUESTS_TOPIC: arhis.moderation.ml.requests
+    MODEL_REGISTRY_BUCKET_NAME: arhis-model-registry
+    PROMETHEUS_BASE_URL: http://prometheus:9090
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -25,17 +37,118 @@ services:
     volumes:
       - redis_data:/data
 
+  kafka:
+    image: apache/kafka:4.1.2
+    container_name: arhis-kafka
+    hostname: kafka
+    ports:
+      - "29092:29092"
+    environment:
+      CLUSTER_ID: arhis2026clusterid
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,PLAINTEXT_HOST://:29092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_MIN_INSYNC_REPLICAS: 1
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+
+  kafka-init:
+    image: apache/kafka:4.1.2
+    container_name: arhis-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_DOMAIN_EVENTS_TOPIC: arhis.domain.events
+      KAFKA_MODERATION_ML_REQUESTS_TOPIC: arhis.moderation.ml.requests
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        until /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list >/dev/null 2>&1; do
+          sleep 2
+        done
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic "$${KAFKA_DOMAIN_EVENTS_TOPIC}" --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic "$${KAFKA_MODERATION_ML_REQUESTS_TOPIC}" --partitions 3 --replication-factor 1
+    restart: "no"
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: arhis-kafka-ui
+    ports:
+      - "8081:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      DYNAMIC_CONFIG_ENABLED: "true"
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  minio:
+    image: minio/minio:latest
+    container_name: arhis-minio
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: arhis-minio-init
+    depends_on:
+      minio:
+        condition: service_started
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_BUCKET_NAME: arhis-event-logs
+      MINIO_MODEL_REGISTRY_BUCKET_NAME: arhis-model-registry
+      MINIO_RETRAINING_DATASET_BUCKET_NAME: arhis-retraining-datasets
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        until mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do
+          sleep 2
+        done
+        mc mb --ignore-existing "local/$${MINIO_BUCKET_NAME}"
+        mc mb --ignore-existing "local/$${MINIO_MODEL_REGISTRY_BUCKET_NAME}"
+        mc mb --ignore-existing "local/$${MINIO_RETRAINING_DATASET_BUCKET_NAME}"
+    restart: "no"
+
   api:
+    <<: *backend-common
     build:
       context: ../..
       dockerfile: src/deploy/dockerfiles/api.Dockerfile
     container_name: arhis-api
-    env_file:
-      - ../../.env
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/arhis
       REDIS_URL: redis://redis:6379/0
-      CORS_ALLOW_ORIGINS: http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      CORS_ALLOW_ORIGINS: http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://localhost:8081
     ports:
       - "8000:8000"
     depends_on:
@@ -43,6 +156,134 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+
+  outbox-relay:
+    <<: *backend-common
+    build:
+      context: ../..
+      dockerfile: src/deploy/dockerfiles/api.Dockerfile
+    container_name: arhis-outbox-relay
+    entrypoint: ["python", "-m", "src.app.workers.outbox_relay"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+
+  ml-inference-worker:
+    <<: *backend-common
+    build:
+      context: ../..
+      dockerfile: src/deploy/dockerfiles/api.Dockerfile
+    container_name: arhis-ml-inference-worker
+    entrypoint: ["python", "-m", "src.app.workers.ml_inference_worker"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/arhis
+      REDIS_URL: redis://redis:6379/0
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_MODERATION_ML_REQUESTS_TOPIC: arhis.moderation.ml.requests
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_ACCESS_KEY_ID: minioadmin
+      S3_SECRET_ACCESS_KEY: minioadmin
+      S3_BUCKET_NAME: arhis-event-logs
+      S3_REGION_NAME: us-east-1
+      S3_USE_SSL: "false"
+      ML_MODEL_PATH: /app/models/cyberbullying_moderation.joblib
+      ML_MODEL_VERSION: dev
+      MODEL_REGISTRY_BUCKET_NAME: arhis-model-registry
+      MODEL_REGISTRY_MODEL_NAME: cyberbullying_moderation
+      MODEL_REGISTRY_CANARY_TRAFFIC_PERCENT: "10"
+      MODEL_REGISTRY_VALIDATION_SAMPLE_SIZE: "32"
+      MODEL_REGISTRY_REQUIRED_ACCURACY: "1.0"
+      MODEL_REGISTRY_CACHE_DIR: /tmp/model-cache
+      ML_WORKER_METRICS_PORT: "8011"
+    volumes:
+      - ../../models:/app/models:ro
+    ports:
+      - "8011:8011"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+
+  retraining-monitor:
+    <<: *backend-common
+    build:
+      context: ../..
+      dockerfile: src/deploy/dockerfiles/api.Dockerfile
+    container_name: arhis-retraining-monitor
+    entrypoint: ["python", "-m", "src.app.workers.retraining_monitor"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/arhis
+      REDIS_URL: redis://redis:6379/0
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_ACCESS_KEY_ID: minioadmin
+      S3_SECRET_ACCESS_KEY: minioadmin
+      S3_BUCKET_NAME: arhis-event-logs
+      S3_REGION_NAME: us-east-1
+      S3_USE_SSL: "false"
+      MODEL_REGISTRY_BUCKET_NAME: arhis-model-registry
+      MODEL_REGISTRY_MODEL_NAME: cyberbullying_moderation
+      MODEL_REGISTRY_CACHE_DIR: /tmp/model-cache
+      RETRAINING_MONITOR_METRICS_PORT: "8012"
+    ports:
+      - "8012:8012"
+    volumes:
+      - ../../data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+
+  parquet-sink:
+    <<: *backend-common
+    build:
+      context: ../..
+      dockerfile: src/deploy/dockerfiles/api.Dockerfile
+    container_name: arhis-parquet-sink
+    entrypoint: ["python", "-m", "src.app.workers.parquet_sink"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/arhis
+      REDIS_URL: redis://redis:6379/0
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_ACCESS_KEY_ID: minioadmin
+      S3_SECRET_ACCESS_KEY: minioadmin
+      S3_BUCKET_NAME: arhis-event-logs
+      S3_REGION_NAME: us-east-1
+      S3_USE_SSL: "false"
+      PARQUET_SINK_PREFIX: event_logs
+      PARQUET_SINK_FLUSH_ROWS: "100"
+      PARQUET_SINK_FLUSH_SECONDS: "10"
+      MODEL_REGISTRY_BUCKET_NAME: arhis-model-registry
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      minio:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
 
   frontend:
     build:
@@ -60,8 +301,22 @@ services:
       - "9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
+    depends_on:
+      - api
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: arhis-alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
     depends_on:
       - api
 
@@ -73,9 +328,14 @@ services:
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       - prometheus
 
 volumes:
   postgres_data:
   redis_data:
+  kafka_data:
+  minio_data:

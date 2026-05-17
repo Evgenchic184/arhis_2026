@@ -10,15 +10,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import RequestUserContext, get_request_user_context
 from src.app.core.database import get_db_session
+from src.app.core.events import emit_domain_event
 from src.app.core.security import create_jwt, hash_password, verify_password
 from src.app.core.settings import get_settings
+from src.app.core.monitoring import refresh_users_total_once
 from src.app.models.enums import UserRole
 from src.app.models.user import User
 from src.app.schemas.auth import TokenResponse, UserLogin, UserRegister
 from src.app.schemas.users import UserRead
+from src.app.services.user_features import UserFeatureService
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 logger = logging.getLogger(__name__)
+user_feature_service = UserFeatureService()
 
 
 async def _username_exists(db: AsyncSession, username: str) -> bool:
@@ -67,23 +71,25 @@ async def register(
         password_salt=salt,
     )
     db.add(user)
+    await emit_domain_event(
+        db,
+        event_type="user_registered",
+        aggregate_type="user",
+        aggregate_id=str(user.id),
+        payload={"username": user.username, "role": user.role.value},
+        actor_id=str(user.id),
+        actor_role=user.role.value,
+    )
     try:
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already exists.") from exc
     await db.refresh(user)
+    await refresh_users_total_once()
+    await user_feature_service.sync_user_features(db, user.id, event_type="user_registered")
 
     token = _build_token(user)
-    logger.info(
-        "user_registered",
-        extra={
-            "event": "user_registered",
-            "user_id": str(user.id),
-            "username": user.username,
-            "role": user.role.value,
-        },
-    )
     return TokenResponse(access_token=token, user=UserRead.model_validate(user))
 
 
@@ -103,19 +109,20 @@ async def login(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is inactive.")
 
     user.last_login_at = datetime.now(timezone.utc)
+    await emit_domain_event(
+        db,
+        event_type="user_logged_in",
+        aggregate_type="user",
+        aggregate_id=str(user.id),
+        payload={"username": user.username, "role": user.role.value},
+        actor_id=str(user.id),
+        actor_role=user.role.value,
+    )
     await db.commit()
     await db.refresh(user)
+    await user_feature_service.sync_user_features(db, user.id, event_type="user_logged_in")
 
     token = _build_token(user)
-    logger.info(
-        "user_logged_in",
-        extra={
-            "event": "user_logged_in",
-            "user_id": str(user.id),
-            "username": user.username,
-            "role": user.role.value,
-        },
-    )
     return TokenResponse(access_token=token, user=UserRead.model_validate(user))
 
 

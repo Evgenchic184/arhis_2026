@@ -31,13 +31,17 @@
 
   let decisionNotes = {};
   let reportsFilter = 'pending';
+  let mlReportsFilter = 'all';
 
   let posts = [];
   let selectedPost = null;
   let comments = [];
   let commentTree = [];
   let reports = [];
+  let mlReports = [];
   let users = [];
+  let modelsOverview = null;
+  let models = [];
 
   let replyTarget = null;
   let reportTarget = null;
@@ -48,15 +52,22 @@
   let loadingComments = false;
   let loadingReports = false;
   let loadingUsers = false;
+  let loadingModels = false;
   let creatingPost = false;
   let creatingComment = false;
   let creatingReport = false;
   let updatingUserRole = '';
   let decidingReportId = '';
+  let promotingModelVersion = '';
+  let rollingBackModel = false;
 
   let authError = '';
   let appError = '';
   let notice = '';
+  let feedRefreshHandle = null;
+  let feedRefreshInProgress = false;
+
+  const feedRefreshIntervalMs = 1000;
 
   $: canModerate = Boolean(me && (me.role === 'moderator' || me.role === 'admin'));
   $: canAdmin = Boolean(me && me.role === 'admin');
@@ -67,6 +78,17 @@
     if (token) {
       await restoreSession();
     }
+
+    feedRefreshHandle = window.setInterval(() => {
+      void refreshOpenPost();
+    }, feedRefreshIntervalMs);
+
+    return () => {
+      if (feedRefreshHandle) {
+        window.clearInterval(feedRefreshHandle);
+        feedRefreshHandle = null;
+      }
+    };
   });
 
   function setNotice(message) {
@@ -87,7 +109,12 @@
     comments = [];
     commentTree = [];
     reports = [];
+    mlReports = [];
     users = [];
+    modelsOverview = null;
+    models = [];
+    reportsFilter = 'pending';
+    mlReportsFilter = 'all';
     replyTarget = null;
     reportTarget = null;
     userRoleDrafts = {};
@@ -96,19 +123,101 @@
     localStorage.removeItem(storageKey);
   }
 
+  function isMlManagedReport(report) {
+    return (
+      report.status === 'queued_for_ml' ||
+      report.status === 'under_review' ||
+      report.decision_source === 'ml_auto' ||
+      (report.status === 'resolved' && report.ml_score !== null && report.ml_score !== undefined)
+    );
+  }
+
+  function getVerdictActorLabel(report) {
+    if (report.decision_source === 'ml_auto') {
+      return 'ML';
+    }
+    if (report.decision_source === 'manual') {
+      return 'Moderator';
+    }
+    if (report.status === 'queued_for_ml') {
+      return 'Pending ML';
+    }
+    if (report.status === 'under_review') {
+      return 'ML escalated';
+    }
+    return 'Unknown';
+  }
+
+  function getConfidenceLabel(report) {
+    if (report.ml_score === null || report.ml_score === undefined) {
+      return 'n/a';
+    }
+    return Number(report.ml_score).toFixed(3);
+  }
+
+  function getMlModelStageLabel(report) {
+    if (!report.ml_model_stage) {
+      return 'n/a';
+    }
+    return report.ml_model_stage;
+  }
+
+  function getMlModelStageChipClass(report) {
+    if (report.ml_model_stage === 'production') {
+      return 'chip-prod';
+    }
+    if (report.ml_model_stage === 'canary') {
+      return 'chip-canary';
+    }
+    return 'chip-soft';
+  }
+
   async function restoreSession() {
     try {
       me = await api.me(token);
       await loadPosts({ silent: true });
       if (me && (me.role === 'moderator' || me.role === 'admin')) {
         await loadReports({ silent: true });
+        await loadMlReports({ silent: true });
       }
       if (me && me.role === 'admin') {
         await loadUsers({ silent: true });
+        await loadModels({ silent: true });
       }
     } catch (error) {
       clearSession();
       setError(error.message || 'Session expired. Please sign in again.');
+    }
+  }
+
+  async function refreshOpenPost() {
+    if (!token || feedRefreshInProgress || activeTab !== 'feed' || !selectedPost) {
+      return;
+    }
+
+    if (
+      authBusy ||
+      creatingPost ||
+      creatingComment ||
+      creatingReport ||
+      updatingUserRole ||
+      promotingModelVersion ||
+      rollingBackModel ||
+      decidingReportId
+    ) {
+      return;
+    }
+
+    feedRefreshInProgress = true;
+
+    try {
+      if (activeTab === 'feed') {
+        await refreshSelectedPost({ silent: true, preserveDrafts: true });
+      }
+    } catch (error) {
+      console.debug('Auto refresh failed', error);
+    } finally {
+      feedRefreshInProgress = false;
     }
   }
 
@@ -136,9 +245,11 @@
       await loadPosts({ silent: true });
       if (me && (me.role === 'moderator' || me.role === 'admin')) {
         await loadReports({ silent: true });
+        await loadMlReports({ silent: true });
       }
       if (me && me.role === 'admin') {
         await loadUsers({ silent: true });
+        await loadModels({ silent: true });
       }
     } catch (error) {
       authError = error.message || 'Authentication failed.';
@@ -187,24 +298,56 @@
     }
   }
 
-  async function selectPost(post) {
+  async function fetchPostView(postId) {
+    const freshPost = await api.getPost(postId);
+    const data = await api.listComments(postId);
+    const nextComments = Array.isArray(data) ? data : [];
+
+    return {
+      freshPost,
+      comments: nextComments,
+      commentTree: buildCommentTree(nextComments)
+    };
+  }
+
+  async function selectPost(post, { silent = false, preserveDrafts = false } = {}) {
+    const draftState = preserveDrafts
+      ? {
+          replyTarget,
+          reportTarget,
+          commentBody,
+          replyBody
+        }
+      : null;
+
     selectedPost = post;
     replyTarget = null;
     reportTarget = null;
     commentTree = [];
     commentBody = '';
     replyBody = '';
+    loadingComments = true;
 
     try {
-      loadingComments = true;
-      const freshPost = await api.getPost(post.id);
-      selectedPost = freshPost;
+      if (!silent) {
+        appError = '';
+      }
 
-      const data = await api.listComments(post.id);
-      comments = Array.isArray(data) ? data : [];
-      commentTree = buildCommentTree(comments);
+      const nextState = await fetchPostView(post.id);
+      selectedPost = nextState.freshPost;
+      comments = nextState.comments;
+      commentTree = nextState.commentTree;
+
+      if (draftState) {
+        replyTarget = draftState.replyTarget;
+        reportTarget = draftState.reportTarget;
+        commentBody = draftState.commentBody;
+        replyBody = draftState.replyBody;
+      }
     } catch (error) {
-      setError(error.message || 'Failed to load comments.');
+      if (!silent) {
+        setError(error.message || 'Failed to load comments.');
+      }
     } finally {
       loadingComments = false;
     }
@@ -279,13 +422,42 @@
     }
   }
 
-  async function refreshSelectedPost() {
-    if (!selectedPost) {
+  async function refreshSelectedPost({ silent = false, preserveDrafts = false } = {}) {
+    const targetPost = selectedPost;
+    if (!targetPost) {
       return;
     }
 
-    await loadPosts({ silent: true });
-    await selectPost(selectedPost);
+    const draftState = preserveDrafts
+      ? {
+          replyTarget,
+          reportTarget,
+          commentBody,
+          replyBody
+        }
+      : null;
+
+    try {
+      if (!silent) {
+        appError = '';
+      }
+
+      const nextState = await fetchPostView(targetPost.id);
+      selectedPost = nextState.freshPost;
+      comments = nextState.comments;
+      commentTree = nextState.commentTree;
+
+      if (draftState) {
+        replyTarget = draftState.replyTarget;
+        reportTarget = draftState.reportTarget;
+        commentBody = draftState.commentBody;
+        replyBody = draftState.replyBody;
+      }
+    } catch (error) {
+      if (!silent) {
+        setError(error.message || 'Failed to load comments.');
+      }
+    }
   }
 
   function startReply(comment) {
@@ -351,6 +523,7 @@
       });
       closeReportModal();
       await loadReports({ silent: true });
+      await loadMlReports({ silent: true });
       setNotice('Report sent.');
     } catch (error) {
       setError(error.message || 'Failed to submit report.');
@@ -372,10 +545,37 @@
 
     try {
       const status = reportsFilter === 'all' ? null : reportsFilter;
-      const data = await api.listReports(token, status);
+      const data = await api.listReports(token, status, { limit: 200 });
       reports = Array.isArray(data) ? data : [];
     } catch (error) {
       setError(error.message || 'Failed to load reports.');
+    } finally {
+      loadingReports = false;
+    }
+  }
+
+  async function loadMlReports({ silent = false } = {}) {
+    if (!canModerate) {
+      mlReports = [];
+      return;
+    }
+
+    loadingReports = true;
+    if (!silent) {
+      appError = '';
+    }
+
+    try {
+      const data = await api.listReports(token, null, { limit: 200 });
+      const fetchedReports = Array.isArray(data) ? data.filter(isMlManagedReport) : [];
+      mlReports = fetchedReports.filter((report) => {
+        if (mlReportsFilter === 'all') {
+          return true;
+        }
+        return report.status === mlReportsFilter;
+      });
+    } catch (error) {
+      setError(error.message || 'Failed to load ML reports.');
     } finally {
       loadingReports = false;
     }
@@ -400,6 +600,29 @@
       setError(error.message || 'Failed to load users.');
     } finally {
       loadingUsers = false;
+    }
+  }
+
+  async function loadModels({ silent = false } = {}) {
+    if (!canAdmin) {
+      modelsOverview = null;
+      models = [];
+      return;
+    }
+
+    loadingModels = true;
+    if (!silent) {
+      appError = '';
+    }
+
+    try {
+      const data = await api.listModels(token);
+      modelsOverview = data;
+      models = Array.isArray(data?.versions) ? data.versions : [];
+    } catch (error) {
+      setError(error.message || 'Failed to load model registry.');
+    } finally {
+      loadingModels = false;
     }
   }
 
@@ -428,9 +651,44 @@
     }
   }
 
+  async function promoteModel(version) {
+    promotingModelVersion = version;
+    try {
+      await api.promoteModel(token, version);
+      await loadModels({ silent: true });
+      setNotice(`Model ${version} promoted to production.`);
+    } catch (error) {
+      setError(error.message || 'Failed to promote model.');
+    } finally {
+      promotingModelVersion = '';
+    }
+  }
+
+  async function rollbackModel() {
+    if (!confirm('Rollback the current production model to the previous version?')) {
+      return;
+    }
+
+    rollingBackModel = true;
+    try {
+      await api.rollbackModel(token);
+      await loadModels({ silent: true });
+      setNotice('Production model rolled back.');
+    } catch (error) {
+      setError(error.message || 'Failed to rollback model.');
+    } finally {
+      rollingBackModel = false;
+    }
+  }
+
   async function setReportsFilter(nextFilter) {
     reportsFilter = nextFilter;
     await loadReports();
+  }
+
+  async function setMlReportsFilter(nextFilter) {
+    mlReportsFilter = nextFilter;
+    await loadMlReports();
   }
 
   async function decideReport(reportId, verdict) {
@@ -443,6 +701,7 @@
 
       decisionNotes = { ...decisionNotes, [reportId]: '' };
       await loadReports({ silent: true });
+      await loadMlReports({ silent: true });
       if (selectedPost) {
         await refreshSelectedPost();
       }
@@ -459,8 +718,14 @@
     if (tab === 'moderation' && canModerate) {
       loadReports();
     }
+    if (tab === 'ml-reports' && canModerate) {
+      loadMlReports();
+    }
     if (tab === 'users' && canAdmin) {
       loadUsers();
+    }
+    if (tab === 'ml' && canAdmin) {
+      loadModels();
     }
   }
 
@@ -547,10 +812,16 @@
         <button type="button" class:active={activeTab === 'moderation'} on:click={() => switchTab('moderation')}>
           Moderation
         </button>
+        <button type="button" class:active={activeTab === 'ml-reports'} on:click={() => switchTab('ml-reports')}>
+          ML reports
+        </button>
       {/if}
       {#if canAdmin}
         <button type="button" class:active={activeTab === 'users'} on:click={() => switchTab('users')}>
           Users
+        </button>
+        <button type="button" class:active={activeTab === 'ml'} on:click={() => switchTab('ml')}>
+          ML
         </button>
       {/if}
       <button type="button" class:active={activeTab === 'profile'} on:click={() => switchTab('profile')}>Profile</button>
@@ -693,6 +964,13 @@
             <button type="button" class:active={reportsFilter === 'pending'} on:click={() => setReportsFilter('pending')}>
               Pending
             </button>
+            <button
+              type="button"
+              class:active={reportsFilter === 'under_review'}
+              on:click={() => setReportsFilter('under_review')}
+            >
+              Under review
+            </button>
             <button type="button" class:active={reportsFilter === 'all'} on:click={() => setReportsFilter('all')}>
               All
             </button>
@@ -704,7 +982,15 @@
         {:else if reports.length === 0}
           <div class="empty-state">
             <strong>No reports</strong>
-            <p>The queue is empty right now.</p>
+            <p>
+              {#if reportsFilter === 'pending'}
+                The pending queue is empty right now.
+              {:else if reportsFilter === 'under_review'}
+                No reports are currently waiting for manual review after ML.
+              {:else}
+                There are no reports for this view right now.
+              {/if}
+            </p>
           </div>
         {:else}
           <div class="report-list">
@@ -714,12 +1000,64 @@
                   <div>
                     <h3>{report.reason}</h3>
                     <p class="muted">
-                      Status: {report.status} · comment author {report.comment_author_name} · reporter {report.reporter_name}
+                      Status: {report.status} · verdict by {getVerdictActorLabel(report)} · comment author {report.comment_author_name} · reporter {report.reporter_name}
                     </p>
                   </div>
-                  {#if report.moderation_verdict}
-                    <span class="chip chip-soft">{report.moderation_verdict}</span>
+                  {#if report.decision_source}
+                    <span class={`chip ${report.decision_source === 'ml_auto' ? 'chip-canary' : 'chip-soft'}`}>
+                      {report.decision_source === 'ml_auto' ? 'ML verdict' : 'Moderator verdict'}
+                    </span>
+                  {:else if report.status === 'queued_for_ml'}
+                    <span class="chip chip-canary">Queued for ML</span>
                   {/if}
+                </div>
+
+                <div class="report-meta-grid">
+                  <div>
+                    <span class="muted">ML confidence</span>
+                    <strong>{getConfidenceLabel(report)}</strong>
+                  </div>
+                  <div>
+                    <span class="muted">ML verdict</span>
+                    <strong>{report.ml_verdict || 'n/a'}</strong>
+                  </div>
+                  <div>
+                    <span class="muted">Model version</span>
+                    <strong>{report.ml_model_version || 'n/a'}</strong>
+                  </div>
+                  <div>
+                    <span class="muted">Model stage</span>
+                    <strong>
+                      {#if report.ml_model_stage}
+                        <span class={`chip ${getMlModelStageChipClass(report)}`}>{getMlModelStageLabel(report)}</span>
+                      {:else}
+                        n/a
+                      {/if}
+                    </strong>
+                  </div>
+                  <div>
+                    <span class="muted">Scored at</span>
+                    <strong>{report.ml_scored_at ? formatDate(report.ml_scored_at) : 'n/a'}</strong>
+                  </div>
+                  <div>
+                    <span class="muted">Decision by</span>
+                    <strong>{getVerdictActorLabel(report)}</strong>
+                  </div>
+                </div>
+
+                {#if report.decision_source === 'ml_auto'}
+                  <div class="ml-decision-banner">
+                    ML auto decision based on confidence and routing policy.
+                  </div>
+                {:else if report.status === 'queued_for_ml'}
+                  <div class="ml-decision-banner muted">
+                    Waiting for ML worker to score this report.
+                  </div>
+                {/if}
+
+                <div class="reported-comment">
+                  <span class="muted tiny">Reported comment</span>
+                  <p>{report.comment_body}</p>
                 </div>
 
                 {#if report.reason_text}
@@ -758,6 +1096,114 @@
                   >
                     Not toxic
                   </button>
+                </div>
+              </article>
+            {/each}
+          </div>
+        {/if}
+      </section>
+    {:else if activeTab === 'ml-reports' && canModerate}
+      <section class="card panel">
+        <div class="panel-header">
+          <div>
+            <h2>ML reports</h2>
+            <p class="muted">Reports routed to ML, escalated by ML, or already resolved with ML involvement.</p>
+          </div>
+          <div class="segmented compact">
+            <button type="button" class:active={mlReportsFilter === 'all'} on:click={() => setMlReportsFilter('all')}>
+              All
+            </button>
+            <button
+              type="button"
+              class:active={mlReportsFilter === 'queued_for_ml'}
+              on:click={() => setMlReportsFilter('queued_for_ml')}
+            >
+              Queued
+            </button>
+            <button
+              type="button"
+              class:active={mlReportsFilter === 'under_review'}
+              on:click={() => setMlReportsFilter('under_review')}
+            >
+              Under review
+            </button>
+            <button
+              type="button"
+              class:active={mlReportsFilter === 'resolved'}
+              on:click={() => setMlReportsFilter('resolved')}
+            >
+              Resolved
+            </button>
+          </div>
+        </div>
+
+        {#if loadingReports}
+          <div class="muted">Loading ML reports...</div>
+        {:else if mlReports.length === 0}
+          <div class="empty-state">
+            <strong>No ML reports</strong>
+            <p>Nothing routed to ML matches this filter right now.</p>
+          </div>
+        {:else}
+          <div class="report-list">
+            {#each mlReports as report (report.id)}
+              <article class="report-card">
+                <div class="report-card-header">
+                  <div>
+                    <h3>{report.reason}</h3>
+                    <p class="muted">
+                      Status: {report.status} · verdict by {getVerdictActorLabel(report)} · confidence {getConfidenceLabel(report)}
+                    </p>
+                  </div>
+                  <span class={`chip ${report.decision_source === 'ml_auto' ? 'chip-canary' : 'chip-soft'}`}>
+                    {report.decision_source === 'ml_auto' ? 'ML verdict' : report.status}
+                  </span>
+                </div>
+
+                <div class="report-meta-grid">
+                  <div>
+                    <span class="muted">ML score</span>
+                    <strong>{getConfidenceLabel(report)}</strong>
+                  </div>
+                  <div>
+                    <span class="muted">ML verdict</span>
+                    <strong>{report.ml_verdict || 'n/a'}</strong>
+                  </div>
+                  <div>
+                    <span class="muted">Model version</span>
+                    <strong>{report.ml_model_version || 'n/a'}</strong>
+                  </div>
+                  <div>
+                    <span class="muted">Model stage</span>
+                    <strong>
+                      {#if report.ml_model_stage}
+                        <span class={`chip ${getMlModelStageChipClass(report)}`}>{getMlModelStageLabel(report)}</span>
+                      {:else}
+                        n/a
+                      {/if}
+                    </strong>
+                  </div>
+                  <div>
+                    <span class="muted">Scored at</span>
+                    <strong>{report.ml_scored_at ? formatDate(report.ml_scored_at) : 'n/a'}</strong>
+                  </div>
+                  <div>
+                    <span class="muted">Decision by</span>
+                    <strong>{getVerdictActorLabel(report)}</strong>
+                  </div>
+                </div>
+
+                <div class="reported-comment">
+                  <span class="muted tiny">Reported comment</span>
+                  <p>{report.comment_body}</p>
+                </div>
+
+                <div class="model-meta">
+                  <span>Reporter {report.reporter_name}</span>
+                  <span>Author {report.comment_author_name}</span>
+                  {#if report.reviewed_by_name}
+                    <span>Reviewed by {report.reviewed_by_name}</span>
+                  {/if}
                 </div>
               </article>
             {/each}
@@ -823,6 +1269,135 @@
                 {#if user.id === me.id}
                   <div class="muted tiny">You cannot change your own role from this screen.</div>
                 {/if}
+              </article>
+            {/each}
+          </div>
+        {/if}
+      </section>
+    {:else if activeTab === 'ml' && canAdmin}
+      <section class="card panel">
+        <div class="panel-header">
+          <div>
+            <h2>Model registry</h2>
+            <p class="muted">Live deployment status, validation state, and manual promotion controls.</p>
+          </div>
+          <div class="topbar-actions">
+            <button type="button" class="ghost-button" on:click={() => loadModels()}>Refresh</button>
+            <button
+              type="button"
+              class="ghost-button danger"
+              on:click={rollbackModel}
+              disabled={rollingBackModel}
+            >
+              {rollingBackModel ? 'Rolling back...' : 'Rollback'}
+            </button>
+          </div>
+        </div>
+
+        <div class="ml-summary-grid">
+          <div class="summary-card">
+            <span class="muted">Model</span>
+            <strong>{modelsOverview?.model_name || 'unknown'}</strong>
+          </div>
+          <div class="summary-card">
+            <span class="muted">Production</span>
+            <strong>{modelsOverview?.active_production?.version || 'none'}</strong>
+          </div>
+          <div class="summary-card">
+            <span class="muted">Canary</span>
+            <strong>{modelsOverview?.active_canary?.version || 'none'}</strong>
+          </div>
+          <div class="summary-card">
+            <span class="muted">Versions</span>
+            <strong>{models.length}</strong>
+          </div>
+        </div>
+
+        {#if loadingModels}
+          <div class="muted">Loading models...</div>
+        {:else if models.length === 0}
+          <div class="empty-state">
+            <strong>No models registered yet</strong>
+            <p>Train and register the first model to see the registry here.</p>
+          </div>
+        {:else}
+          <div class="model-list">
+            {#each models as model (model.id)}
+              <article class="model-card">
+                <div class="model-card-header">
+                  <div>
+                    <h3>{model.version}</h3>
+                    <p class="muted">{model.model_name} · feature config v{model.feature_config_version}</p>
+                  </div>
+                  <span class={`chip ${model.status === 'production' ? 'chip-prod' : model.status === 'canary' ? 'chip-canary' : 'chip-soft'}`}>
+                    {model.status}
+                  </span>
+                </div>
+
+                <div class="model-grid">
+                  <div>
+                    <span class="muted">Traffic</span>
+                    <strong>{model.traffic_percent}%</strong>
+                  </div>
+                  <div>
+                    <span class="muted">Validation acc</span>
+                    <strong>{model.validation_accuracy ?? 'n/a'}</strong>
+                  </div>
+                  <div>
+                    <span class="muted">Required acc</span>
+                    <strong>{model.required_validation_accuracy}</strong>
+                  </div>
+                  <div>
+                    <span class="muted">Samples</span>
+                    <strong>{model.validation_sample_size}</strong>
+                  </div>
+                </div>
+
+                <div class="model-artifacts">
+                  <div>
+                    <span class="muted">Artifact</span>
+                    <p>{model.artifact_uri}</p>
+                  </div>
+                  {#if model.metadata_uri}
+                    <div>
+                      <span class="muted">Metadata</span>
+                      <p>{model.metadata_uri}</p>
+                    </div>
+                  {/if}
+                </div>
+
+                {#if model.notes}
+                  <p class="muted">{model.notes}</p>
+                {/if}
+
+                <div class="model-meta">
+                  <span>Created {formatDate(model.created_at)}</span>
+                  {#if model.promoted_at}
+                    <span>Promoted {formatDate(model.promoted_at)}</span>
+                  {/if}
+                  {#if model.rolled_back_at}
+                    <span>Rolled back {formatDate(model.rolled_back_at)}</span>
+                  {/if}
+                </div>
+
+                <div class="model-actions">
+                  {#if model.status !== 'production' && (model.status === 'canary' || model.status === 'validated' || model.status === 'candidate')}
+                    <button
+                      type="button"
+                      class="primary-button"
+                      disabled={promotingModelVersion === model.version}
+                      on:click={() => promoteModel(model.version)}
+                    >
+                      {promotingModelVersion === model.version ? 'Promoting...' : 'Promote'}
+                    </button>
+                  {/if}
+                  {#if model.status === 'production'}
+                    <span class="chip chip-prod">Live production</span>
+                  {/if}
+                  {#if model.status === 'canary'}
+                    <span class="chip chip-canary">Canary traffic</span>
+                  {/if}
+                </div>
               </article>
             {/each}
           </div>

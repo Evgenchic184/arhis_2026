@@ -11,14 +11,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import RequestUserContext, get_request_user_context
 from src.app.core.database import get_db_session
+from src.app.core.events import emit_domain_event
+from src.app.core.monitoring import increment_comments_created
 from src.app.models.comment import Comment
 from src.app.models.enums import CommentVisibility, UserRole
 from src.app.models.post import Post
 from src.app.schemas.comments import CommentCreate, CommentRead, CommentUpdate
 from src.app.services.user_counters import increment_user_counters
+from src.app.services.user_features import UserFeatureService
 
 router = APIRouter(tags=["comments"])
 logger = logging.getLogger(__name__)
+user_feature_service = UserFeatureService()
 
 DELETED_COMMENT_BODY = "Комментарий удален"
 HIDDEN_COMMENT_BODY = "Комментарий скрыт модератором"
@@ -79,20 +83,25 @@ async def create_comment(
     db.add(comment)
     await increment_user_counters(db, context.user_id, ["comments_count"])
     post.comments_count += 1
+    await emit_domain_event(
+        db,
+        event_type="comment_created",
+        aggregate_type="comment",
+        aggregate_id=str(comment.id),
+        payload={
+            "post_id": str(post_id),
+            "parent_comment_id": str(payload.parent_comment_id) if payload.parent_comment_id else None,
+            "visibility": comment.visibility.value,
+        },
+        actor_id=str(context.user_id),
+        actor_role=context.role.value,
+    )
     await db.commit()
+    increment_comments_created()
+    await user_feature_service.sync_user_features(db, context.user_id, event_type="comment_created")
     stmt = select(Comment).options(selectinload(Comment.author)).where(Comment.id == comment.id)
     result = await db.execute(stmt)
     comment = result.scalar_one()
-    logger.info(
-        "comment_created",
-        extra={
-            "event": "comment_created",
-            "comment_id": str(comment.id),
-            "post_id": str(post_id),
-            "author_id": str(context.user_id),
-            "parent_comment_id": str(payload.parent_comment_id) if payload.parent_comment_id else None,
-        },
-    )
     return _serialize_comment(comment)
 
 
@@ -130,18 +139,19 @@ async def update_comment(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Comment is deleted.")
 
     comment.body = payload.body
+    await emit_domain_event(
+        db,
+        event_type="comment_updated",
+        aggregate_type="comment",
+        aggregate_id=str(comment.id),
+        payload={"post_id": str(comment.post_id)},
+        actor_id=str(context.user_id),
+        actor_role=context.role.value,
+    )
     await db.commit()
     stmt = select(Comment).options(selectinload(Comment.author)).where(Comment.id == comment.id)
     result = await db.execute(stmt)
     comment = result.scalar_one()
-    logger.info(
-        "comment_updated",
-        extra={
-            "event": "comment_updated",
-            "comment_id": str(comment_id),
-            "author_id": str(context.user_id),
-        },
-    )
     return _serialize_comment(comment)
 
 
@@ -163,13 +173,14 @@ async def delete_comment(
     comment.is_deleted = True
     comment.deleted_at = datetime.now(timezone.utc)
     await increment_user_counters(db, comment.author_id, ["deleted_comments_count"])
-    await db.commit()
-    logger.info(
-        "comment_deleted",
-        extra={
-            "event": "comment_deleted",
-            "comment_id": str(comment_id),
-            "author_id": str(context.user_id),
-            "deleted_at": comment.deleted_at.isoformat() if comment.deleted_at else None,
-        },
+    await emit_domain_event(
+        db,
+        event_type="comment_deleted",
+        aggregate_type="comment",
+        aggregate_id=str(comment.id),
+        payload={"post_id": str(comment.post_id), "deleted_at": comment.deleted_at.isoformat()},
+        actor_id=str(context.user_id),
+        actor_role=context.role.value,
     )
+    await db.commit()
+    await user_feature_service.sync_user_features(db, comment.author_id, event_type="comment_deleted")

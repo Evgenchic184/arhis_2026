@@ -9,7 +9,13 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy import Enum as SAEnum
 
 from src.app.models.base import Base, TimestampMixin, UUIDMixin
-from src.app.models.enums import MLVerdict, ModerationVerdict, ReportReason, ReportStatus
+from src.app.models.enums import (
+    DecisionSource,
+    MLVerdict,
+    ModerationVerdict,
+    ReportReason,
+    ReportStatus,
+)
 
 if TYPE_CHECKING:
     from src.app.models.comment import Comment
@@ -38,6 +44,11 @@ class CommentReport(UUIDMixin, TimestampMixin, Base):
         nullable=False,
         index=True,
     )
+    decision_source: Mapped[DecisionSource | None] = mapped_column(
+        SAEnum(DecisionSource, name="decision_source", native_enum=False),
+        nullable=True,
+        index=True,
+    )
     moderation_verdict: Mapped[ModerationVerdict | None] = mapped_column(
         SAEnum(ModerationVerdict, name="moderation_verdict", native_enum=False),
         nullable=True,
@@ -50,12 +61,14 @@ class CommentReport(UUIDMixin, TimestampMixin, Base):
         index=True,
     )
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ml_scored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ml_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     ml_verdict: Mapped[MLVerdict | None] = mapped_column(
         SAEnum(MLVerdict, name="ml_verdict", native_enum=False),
         nullable=True,
     )
     ml_model_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ml_model_stage: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     comment: Mapped["Comment"] = relationship(back_populates="reports")
     reporter: Mapped["User"] = relationship(

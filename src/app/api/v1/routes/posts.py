@@ -10,12 +10,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import RequestUserContext, get_request_user_context
 from src.app.core.database import get_db_session
+from src.app.core.events import emit_domain_event
+from src.app.core.monitoring import increment_posts_created
 from src.app.models.post import Post
 from src.app.schemas.posts import PostCreate, PostRead, PostUpdate
 from src.app.services.user_counters import increment_user_counters
+from src.app.services.user_features import UserFeatureService
 
 router = APIRouter(prefix="/posts", tags=["posts"])
 logger = logging.getLogger(__name__)
+user_feature_service = UserFeatureService()
 
 
 def _serialize_post(post: Post) -> PostRead:
@@ -42,11 +46,21 @@ async def create_post(
     post = Post(author_id=context.user_id, **payload.model_dump())
     db.add(post)
     await increment_user_counters(db, context.user_id, ["posts_count"])
+    await emit_domain_event(
+        db,
+        event_type="post_created",
+        aggregate_type="post",
+        aggregate_id=str(post.id),
+        payload={"title": post.title, "is_published": post.is_published},
+        actor_id=str(context.user_id),
+        actor_role=context.role.value,
+    )
     await db.commit()
+    increment_posts_created()
+    await user_feature_service.sync_user_features(db, context.user_id, event_type="post_created")
     stmt = select(Post).options(selectinload(Post.author)).where(Post.id == post.id)
     result = await db.execute(stmt)
     post = result.scalar_one()
-    logger.info("post_created", extra={"event": "post_created", "post_id": str(post.id), "author_id": str(context.user_id)})
     return _serialize_post(post)
 
 
@@ -114,5 +128,13 @@ async def delete_post(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not post owner.")
 
     await db.delete(post)
+    await emit_domain_event(
+        db,
+        event_type="post_deleted",
+        aggregate_type="post",
+        aggregate_id=str(post_id),
+        payload={"author_id": str(post.author_id)},
+        actor_id=str(context.user_id),
+        actor_role=context.role.value,
+    )
     await db.commit()
-    logger.info("post_deleted", extra={"event": "post_deleted", "post_id": str(post_id), "author_id": str(context.user_id)})

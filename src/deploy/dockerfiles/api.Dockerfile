@@ -13,6 +13,7 @@ RUN pip install --no-cache-dir uv \
 COPY pyproject.toml uv.lock /app/
 RUN uv sync --no-dev
 
+COPY params.yaml /app/params.yaml
 COPY alembic.ini /app/alembic.ini
 COPY src /app/src
 COPY README.md /app/README.md

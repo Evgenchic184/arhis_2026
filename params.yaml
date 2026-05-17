@@ -48,3 +48,34 @@ model:
   ngram_max: 2
   max_iter: 1000
   class_weight: balanced
+
+model_registry:
+  canary_traffic_percent: 10
+  validation_sample_size: 32
+  required_accuracy: 1.0
+  model_name: cyberbullying_moderation
+
+retraining:
+  enabled: true
+  cooldown_seconds: 86400
+  monitor_interval_seconds: 600
+  data_window_hours: 168
+  manual_sample_window_hours: 168
+  min_class_count: 50
+  fallback_train_max_share: 1.0
+  psi_threshold: 0.2
+  new_token_share_threshold: 0.1
+  manual_accuracy_threshold: 0.95
+  manual_accuracy_drop_threshold: 0.05
+  manual_accuracy_min_samples: 20
+
+canary_training:
+  sample_fraction: 0.1
+  label_noise_rate: 0.25
+  max_features: 2000
+  ngram_min: 1
+  ngram_max: 1
+  max_iter: 400
+  class_weight: balanced
+  validation_required_accuracy: 0.0
+  output_dir: models/canary_test

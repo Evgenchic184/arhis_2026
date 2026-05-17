@@ -4,6 +4,8 @@ import json
 import logging
 from datetime import datetime, timezone
 
+from src.app.core.request_context import get_request_id
+
 
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
@@ -13,6 +15,9 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             "message": record.getMessage(),
         }
+        request_id = get_request_id()
+        if request_id:
+            payload["request_id"] = request_id
         standard_keys = {
             "name",
             "msg",

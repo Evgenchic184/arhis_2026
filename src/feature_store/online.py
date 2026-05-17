@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 try:
@@ -39,11 +39,15 @@ class OnlineFeatureStore:
         self.redis_url = redis_url
         self.namespace = namespace
         self._memory_store: dict[str, dict[str, Any]] = {}
+        self._memory_events: dict[str, list[dict[str, Any]]] = {}
         self._client = redis.from_url(redis_url, decode_responses=True) if redis and redis_url else None
         self._config_store = get_feature_config_store(redis_url=self.redis_url, namespace=self.namespace)
 
     def _key(self, user_id: str) -> str:
         return f"{self.namespace}:user:{user_id}:features"
+
+    def _events_key(self, user_id: str) -> str:
+        return f"{self.namespace}:user:{user_id}:events"
 
     async def get_user_features(self, user_id: str | int | None) -> dict[str, Any]:
         feature_config = await self._config_store.get()
@@ -84,6 +88,86 @@ class OnlineFeatureStore:
             await self._client.hset(self._key(user_key), mapping={key: str(value) for key, value in payload.items()})
         except Exception:
             self._memory_store[user_key] = dict(payload)
+
+    async def record_user_event(
+        self,
+        user_id: str | int,
+        *,
+        event_type: str,
+        metadata: Mapping[str, Any] | None = None,
+        at: datetime | None = None,
+        max_items: int = 500,
+        prune_days: int = 30,
+    ) -> None:
+        user_key = str(user_id)
+        event = {
+            "event_type": event_type,
+            "created_at": (at or datetime.now(timezone.utc)).isoformat(),
+            "metadata": dict(metadata or {}),
+        }
+
+        if self._client is None:
+            history = list(self._memory_events.get(user_key, []))
+            history.append(event)
+            cutoff = datetime.now(timezone.utc) - timedelta(days=prune_days)
+            filtered = []
+            for item in history[-max_items:]:
+                created_at = item.get("created_at")
+                try:
+                    created_ts = datetime.fromisoformat(str(created_at))
+                except Exception:
+                    continue
+                if created_ts.tzinfo is None:
+                    created_ts = created_ts.replace(tzinfo=timezone.utc)
+                if created_ts >= cutoff:
+                    filtered.append(item)
+            self._memory_events[user_key] = filtered
+            return
+
+        try:
+            payload = await self._client.lrange(self._events_key(user_key), 0, max_items - 1)
+            history = []
+            for item in payload:
+                try:
+                    history.append(json.loads(item))
+                except Exception:
+                    continue
+            history.append(event)
+            cutoff = datetime.now(timezone.utc) - timedelta(days=prune_days)
+            filtered = []
+            for item in history[-max_items:]:
+                created_at = item.get("created_at")
+                try:
+                    created_ts = datetime.fromisoformat(str(created_at))
+                except Exception:
+                    continue
+                if created_ts.tzinfo is None:
+                    created_ts = created_ts.replace(tzinfo=timezone.utc)
+                if created_ts >= cutoff:
+                    filtered.append(item)
+            await self._client.delete(self._events_key(user_key))
+            if filtered:
+                await self._client.rpush(self._events_key(user_key), *[json.dumps(item, ensure_ascii=False) for item in filtered])
+        except Exception:
+            history = list(self._memory_events.get(user_key, []))
+            history.append(event)
+            self._memory_events[user_key] = history[-max_items:]
+
+    async def get_user_events(self, user_id: str | int, max_items: int = 500) -> list[dict[str, Any]]:
+        user_key = str(user_id)
+        if self._client is None:
+            return list(self._memory_events.get(user_key, []))
+        try:
+            payload = await self._client.lrange(self._events_key(user_key), 0, max_items - 1)
+            events: list[dict[str, Any]] = []
+            for item in payload:
+                try:
+                    events.append(json.loads(item))
+                except Exception:
+                    continue
+            return events
+        except Exception:
+            return list(self._memory_events.get(user_key, []))
 
     async def record_moderation_event(
         self,
